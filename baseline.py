@@ -1,3 +1,13 @@
+import time
+import argparse
+import glob
+from dataclasses import dataclass, fields, asdict
+from pathlib import Path
+
+import numpy as np
+import torch
+from torch import nn
+import torch.nn.functional as F
 
 # -----------------------------------------------------------------------------
 # model code
@@ -13,7 +23,6 @@ class CausalSelfAttention(nn.Module):
         self.c_attn = nn.Linear(self.n_embd, 3 * self.n_embd, bias=False)
         # output projection
         self.c_proj = nn.Linear(self.n_embd, self.n_embd, bias=False)
-        self.rotary = Rotary(self.head_dim)
 
     def forward(self, x):
         B, T, C = x.size() # batch size, sequence length, embedding dimensionality (n_embd)
@@ -50,8 +59,8 @@ class Block(nn.Module):
         self.mlp = MLP(config)
 
     def forward(self, x):
-        x = x + self.attn(self.ln1(x))
-        x = x + self.mlp(self.ln2(x))
+        x = x + self.attn(self.ln_1(x))
+        x = x + self.mlp(self.ln_2(x))
         return x
 
 @dataclass
@@ -68,7 +77,7 @@ class GPT(nn.Module):
 
         self.transformer = nn.ModuleDict(dict(
             wte = nn.Embedding(config.vocab_size, config.n_embd),
-            wpe = nn.Embedding(config.block_size, config.n_embd),
+            wpe = nn.Embedding(1024, config.n_embd),
             h = nn.ModuleList([Block(config) for _ in range(config.n_layer)]),
             ln_f = nn.LayerNorm(config.n_embd),
         ))
@@ -98,12 +107,13 @@ class GPT(nn.Module):
 class Wrapper(nn.Module):
     def __init__(self, checkpoint):
         super().__init__()
-        self.model = GPT(checkpoint["config"])
+        config = checkpoint["config"]
+        self.model = GPT(GPTConfig(**config))
         self.model.load_state_dict(checkpoint["model_state_dict"])
 
     def forward(self, idx):
         logits, _ = self.model(idx)
-        return logits[:50257]
+        return logits[:, :, :50257]
 
 def load_model(checkpoint_path: str, device: str = "cuda") -> torch.nn.Module:
     """
@@ -210,7 +220,6 @@ class DistributedDataLoader:
 class Hyperparameters:
     # data hyperparams
     input_bin : str = 'data/fineweb10B/fineweb_train_*.bin' # input .bin to train on
-    input_val_bin : str = 'data/fineweb10B/fineweb_val_*.bin' # input .bin to eval validation loss on
 
     # model hyperparams
     n_layer: int = 8
@@ -242,125 +251,138 @@ def parse_args() -> Hyperparameters:
 
     return Hyperparameters(**vars(parser.parse_args()))
 
-args = parse_args()
+if __name__ == "__main__":
+    args = parse_args()
 
-assert torch.cuda.is_available()
-device = "cuda:0"
-torch.cuda.set_device(0)
+    assert torch.cuda.is_available()
+    device = "cuda:0"
+    torch.cuda.set_device(0)
 
-process_rank = 0
-num_processes = 1
+    process_rank = 0
+    num_processes = 1
 
-# convenience variables
-B, T = args.device_batch_size, args.sequence_length
-# calculate the steps of gradient accumulation required to attain the desired global batch size.
-assert args.batch_size % B == 0
-train_accumulation_steps = args.batch_size // B
+    # convenience variables
+    B, T = args.device_batch_size, args.sequence_length
+    # calculate the steps of gradient accumulation required to attain the desired global batch size.
+    assert args.batch_size % B == 0
+    train_accumulation_steps = args.batch_size // B
 
-# load tokens
-train_loader = DistributedDataLoader(args.input_bin, B, T, process_rank, num_processes)
-val_loader = DistributedDataLoader(args.input_val_bin, B, T, process_rank, num_processes)
-print(f"Training DataLoader: total number of tokens: {train_loader.ntok_total} across {len(train_loader.files)} files")
-print(f"Validation DataLoader: total number of tokens: {val_loader.ntok_total} across {len(val_loader.files)} files")
-x, y = train_loader.next_batch()
+    # load tokens
+    train_loader = DistributedDataLoader(args.input_bin, B, T, process_rank, num_processes)
+    print(f"Training DataLoader: total number of tokens: {train_loader.ntok_total} across {len(train_loader.files)} files")
+    x, y = train_loader.next_batch()
 
-# init the model from scratch
-assert args.n_layer >= 1
-assert args.n_head >= 1
-assert args.n_embd % args.n_head == 0
-assert (args.n_embd // args.n_head) % 2 == 0
+    # init the model from scratch
+    assert args.n_layer >= 1
+    assert args.n_head >= 1
+    assert args.n_embd % args.n_head == 0
+    assert (args.n_embd // args.n_head) % 2 == 0
 
-model_config = GPTConfig(
-    vocab_size=50304,
-    n_layer=args.n_layer,
-    n_head=args.n_head,
-    n_embd=args.n_embd,
-)
+    model_config = GPTConfig(
+        vocab_size=50304,
+        n_layer=args.n_layer,
+        n_head=args.n_head,
+        n_embd=args.n_embd,
+    )
 
-model = GPT(model_config)
-model = model.cuda()
-raw_model = model
-ctx = torch.amp.autocast(device_type='cuda', dtype=torch.bfloat16)
+    model = GPT(model_config)
+    model = model.cuda()
+    raw_model = model
+    ctx = torch.amp.autocast(device_type='cuda', dtype=torch.bfloat16)
 
-# init the optimizer(s)
-optimizer1 = torch.optim.AdamW(raw_model.lm_head.parameters(), lr=args.learning_rate, betas=(0.9, 0.95), weight_decay=args.weight_decay, fused=True)
-optimizer2 = torch.optim.AdamW(raw_model.transformer.h.parameters(), lr=0.5*args.embed_learning_rate, betas=(0.9, 0.95), weight_decay=args.weight_decay, fused=True)
-optimizers = [optimizer1, optimizer2]
-# learning rate decay scheduler (linear warmup and warmdown)
-def get_lr(it):
-    assert it <= args.num_iterations
-    # 1) linear warmup for warmup_iters steps
-    if it < args.warmup_iters:
-        return (it+1) / args.warmup_iters
-    # 2) constant lr for a while
-    elif it < args.num_iterations - args.warmdown_iters:
-        return 1.0
-    # 3) linear warmdown
-    else:
-        decay_ratio = (args.num_iterations - it) / args.warmdown_iters
-        return decay_ratio
-schedulers = [torch.optim.lr_scheduler.LambdaLR(opt, get_lr) for opt in optimizers]
+    # init the optimizer(s)
+    param_dict = {pn: p for pn, p in raw_model.named_parameters()}
+    param_dict = {pn: p for pn, p in param_dict.items() if p.requires_grad}
+    # create optim groups. Any parameters that is 2D will be weight decayed, otherwise no.
+    # i.e. all weight tensors in matmuls + embeddings decay, all biases and layernorms don't.
+    decay_params = [p for n, p in param_dict.items() if p.dim() >= 2]
+    nodecay_params = [p for n, p in param_dict.items() if p.dim() < 2]
+    optim_groups = [
+        {'params': decay_params, 'weight_decay': args.weight_decay},
+        {'params': nodecay_params, 'weight_decay': 0.0}
+    ]
+    num_decay_params = sum(p.numel() for p in decay_params)
+    num_nodecay_params = sum(p.numel() for p in nodecay_params)
+    print(f"num decayed parameter tensors: {len(decay_params)}, with {num_decay_params:,} parameters")
+    print(f"num non-decayed parameter tensors: {len(nodecay_params)}, with {num_nodecay_params:,} parameters")
+    # Create AdamW optimizer and use the fused version if it is available
+    optimizer = torch.optim.AdamW(optim_groups, lr=args.learning_rate, betas=(0.9, 0.95), fused=True)
 
-training_time_ms = 0
-# start the clock
-torch.cuda.synchronize()
-t0 = time.time()
-# begin training
-train_loader.reset()
-for step in range(args.num_iterations + 1):
-    last_step = (step == args.num_iterations)
-    # This effectively ignores timing first 10 steps, which are slower for weird reasons.
-    # Alternately, and slightly more correctly in terms of benchmarking, we could do 10
-    # steps with dummy data first, and then re-initialize the model and reset the loader.
-    if step == 10:
-        training_time_ms = 0
-        t0 = time.time()
-    timed_steps = float('nan') if step <= 11 else (step - 10) + 1 # <= 11 to avoid bug in val
+    optimizers = [optimizer]
+    # learning rate decay scheduler (linear warmup and warmdown)
+    def get_lr(it):
+        assert it <= args.num_iterations
+        # 1) linear warmup for warmup_iters steps
+        if it < args.warmup_iters:
+            return (it+1) / args.warmup_iters
+        # 2) constant lr for a while
+        elif it < args.num_iterations - args.warmdown_iters:
+            return 1.0
+        # 3) linear warmdown
+        else:
+            decay_ratio = (args.num_iterations - it) / args.warmdown_iters
+            return decay_ratio
+    schedulers = [torch.optim.lr_scheduler.LambdaLR(opt, get_lr) for opt in optimizers]
 
-    # bit confusing: we want to make sure to eval on 0th iteration
-    # but also after the very last iteration. so we loop for step <= num_iterations
-    # instead of just < num_iterations (one extra due to <=), only to do
-    # the validation/sampling one last time, and then we break right here as we're done.
-    if last_step:
-        checkpoint_path = Path(args.checkpoint_path)
+    training_time_ms = 0
+    # start the clock
+    torch.cuda.synchronize()
+    t0 = time.time()
+    # begin training
+    train_loader.reset()
+    for step in range(args.num_iterations + 1):
+        last_step = (step == args.num_iterations)
+        # This effectively ignores timing first 10 steps, which are slower for weird reasons.
+        # Alternately, and slightly more correctly in terms of benchmarking, we could do 10
+        # steps with dummy data first, and then re-initialize the model and reset the loader.
+        if step == 10:
+            training_time_ms = 0
+            t0 = time.time()
+        timed_steps = float('nan') if step <= 11 else (step - 10) + 1 # <= 11 to avoid bug in val
 
-        if checkpoint_path.parent != Path("."):
-            checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+        # bit confusing: we want to make sure to eval on 0th iteration
+        # but also after the very last iteration. so we loop for step <= num_iterations
+        # instead of just < num_iterations (one extra due to <=), only to do
+        # the validation/sampling one last time, and then we break right here as we're done.
+        if last_step:
+            checkpoint_path = Path(args.checkpoint_path)
 
-        checkpoint = {
-            "config": raw_model.config,
-            "model_state_dict": raw_model.state_dict(),
-            "step": step,
-            "val_loss": val_loss.item() if "val_loss" in locals() else None,
-        }
+            if checkpoint_path.parent != Path("."):
+                checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
 
-        torch.save(checkpoint, checkpoint_path)
-        print(f"saved final checkpoint to {checkpoint_path}")
+            checkpoint = {
+                "config": asdict(raw_model.config),
+                "model_state_dict": raw_model.state_dict(),
+                "step": step,
+            }
 
-        break
+            torch.save(checkpoint, checkpoint_path)
+            print(f"saved final checkpoint to {checkpoint_path}")
 
-    # --------------- TRAINING SECTION BEGIN -----------------
-    model.train()
-    for i in range(1, train_accumulation_steps + 1):
-        # forward pass
-        with ctx:
-            _, loss = model(x, y, return_logits=False)
-            train_loss = loss.detach()
-            # advance the dataset for the next batch
-        x, y = train_loader.next_batch()
-        # backward pass
-        loss.backward()
+            break
 
-    for p in model.parameters():
-        if p.grad is not None:
-            p.grad.div_(train_accumulation_steps)
-    # step the optimizers and schedulers
-    for opt, sched in zip(optimizers, schedulers):
-        opt.step()
-        sched.step()
-    # null the gradients
-    model.zero_grad(set_to_none=True)
-    # --------------- TRAINING SECTION END -------------------
+        # --------------- TRAINING SECTION BEGIN -----------------
+        model.train()
+        for i in range(1, train_accumulation_steps + 1):
+            # forward pass
+            with ctx:
+                _, loss = model(x, y)
+                train_loss = loss.detach()
+                # advance the dataset for the next batch
+            x, y = train_loader.next_batch()
+            # backward pass
+            loss.backward()
 
-    approx_time = training_time_ms + 1000 * (time.time() - t0)
-    print(f"step:{step+1}/{args.num_iterations} train_loss:{train_loss.item():.4f} train_time:{approx_time:.0f}ms step_avg:{approx_time/timed_steps:.2f}ms")
+        for p in model.parameters():
+            if p.grad is not None:
+                p.grad.div_(train_accumulation_steps)
+        # step the optimizers and schedulers
+        for opt, sched in zip(optimizers, schedulers):
+            opt.step()
+            sched.step()
+        # null the gradients
+        model.zero_grad(set_to_none=True)
+        # --------------- TRAINING SECTION END -------------------
+
+        approx_time = training_time_ms + 1000 * (time.time() - t0)
+        print(f"step:{step+1}/{args.num_iterations} train_loss:{train_loss.item():.4f} train_time:{approx_time:.0f}ms step_avg:{approx_time/timed_steps:.2f}ms")
