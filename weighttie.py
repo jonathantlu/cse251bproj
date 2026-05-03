@@ -229,13 +229,13 @@ class Hyperparameters:
 
     # optimization hyperparams
     batch_size : int = 8*64 # batch size, in sequences, across all devices
-    device_batch_size : int = 2 # batch size, in sequences, per device
+    device_batch_size : int = 4 # batch size, in sequences, per device
     sequence_length : int = 1024 # sequence length, in tokens
 
-    num_iterations : int = 5000 # number of iterations to run
-    learning_rate : float = 6e-4
+    num_iterations : int = 4000 # number of iterations to run
+    learning_rate : float = 0.0036
     warmup_iters : int = 250
-    warmdown_iters : int = 1450 # number of iterations of linear warmup/warmdown for triangular or trapezoidal schedule
+    warmdown_iters : int = 500 # number of iterations of linear warmup/warmdown for triangular or trapezoidal schedule
     weight_decay : float = 0
 
     checkpoint_path: str = "checkpoint.pt"
@@ -280,7 +280,7 @@ if __name__ == "__main__":
     assert (args.n_embd // args.n_head) % 2 == 0
 
     model_config = GPTConfig(
-        vocab_size=50257,
+        vocab_size=50304,
         n_layer=args.n_layer,
         n_head=args.n_head,
         n_embd=args.n_embd,
