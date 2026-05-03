@@ -142,12 +142,20 @@ class GPT(nn.Module):
         return logits, loss
 
 class Wrapper(nn.Module):
-    def __init__(self, config):
+    def __init__(self, checkpoint):
         super().__init__()
-        self.model = GPT(config)
+        self.model = GPT(checkpoint["config"])
+        self.model.load_state_dict(checkpoint["model_state_dict"])
 
     def forward(self, idx):
-        logits, _ = self.model.forward(idx)
+        x = self.model.transformer.wte(idx)
+
+        for block in self.model.transformer.h:
+            x = block(x)
+        x = rmsnorm(x)
+        logits = self.model.lm_head(x)
+        logits = logits.float()
+
         return logits
 
 def load_model(checkpoint_path: str, device: str = "cuda") -> torch.nn.Module:
@@ -167,9 +175,7 @@ def load_model(checkpoint_path: str, device: str = "cuda") -> torch.nn.Module:
 
     checkpoint = torch.load(checkpoint_path, map_location = device, weights_only = False)
 
-    config = checkpoint["config"]
-    model = Wrapper(config)
-    model.load_state_dict(checkpoint["model_state_dict"])
+    model = Wrapper(checkpoint)
 
     model.to(device)
     model.eval()
