@@ -1,5 +1,6 @@
 import time
-from dataclasses import dataclass
+import argparse
+from dataclasses import dataclass, fields
 from pathlib import Path
 
 import torch
@@ -13,6 +14,12 @@ class Hyperparameters:
     # data hyperparams
     input_bin : str = 'data/fineweb10B/fineweb_train_*.bin' # input .bin to train on
     input_val_bin : str = 'data/fineweb10B/fineweb_val_*.bin' # input .bin to eval validation loss on
+
+    # model hyperparams
+    n_layer: int = 12
+    n_head: int = 12
+    n_embd: int = 768
+
     # optimization hyperparams
     batch_size : int = 8*64 # batch size, in sequences, across all devices
     device_batch_size : int = 1 # batch size, in sequences, per device
@@ -28,7 +35,20 @@ class Hyperparameters:
     val_loss_every : int = 0 # every how many steps to evaluate val loss? 0 for only at the end
     val_tokens : int = 1024 * 64 # how many tokens of validation data? it's important to keep this fixed for consistent comparisons
     checkpoint_path: str = "checkpoint.pt"
-args = Hyperparameters()
+
+def parse_args() -> Hyperparameters:
+    parser = argparse.ArgumentParser()
+
+    for field in fields(Hyperparameters):
+        parser.add_argument(
+            f"--{field.name}",
+            type=type(field.default),
+            default=field.default,
+        )
+
+    return Hyperparameters(**vars(parser.parse_args()))
+
+args = parse_args()
 
 assert torch.cuda.is_available()
 device = "cuda:0"
@@ -54,8 +74,19 @@ print(f"Validation DataLoader: total number of tokens: {val_loader.ntok_total} a
 x, y = train_loader.next_batch()
 
 # init the model from scratch
-num_vocab = 50257
-model = GPT(GPTConfig(vocab_size=num_vocab, n_layer=12, n_head=12, n_embd=768))
+assert args.n_layer >= 1
+assert args.n_head >= 1
+assert args.n_embd % args.n_head == 0
+assert (args.n_embd // args.n_head) % 2 == 0
+
+model_config = GPTConfig(
+    vocab_size=50257,
+    n_layer=args.n_layer,
+    n_head=args.n_head,
+    n_embd=args.n_embd,
+)
+
+model = GPT(model_config)
 model = model.cuda()
 raw_model = model
 ctx = torch.amp.autocast(device_type='cuda', dtype=torch.bfloat16)
