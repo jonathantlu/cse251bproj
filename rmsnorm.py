@@ -10,7 +10,7 @@ from torch import nn
 import torch.nn.functional as F
 
 # -----------------------------------------------------------------------------
-# model code
+# model code .
 
 def norm(x):
     return F.rms_norm(x, (x.size(-1),))
