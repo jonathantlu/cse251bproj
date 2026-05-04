@@ -65,7 +65,7 @@ class Block(nn.Module):
 
 @dataclass
 class GPTConfig:  # gpt-2 config, about 124m params
-    vocab_size : int = 50257
+    vocab_size : int = 50304
     n_layer : int = 8
     n_head : int = 8
     n_embd : int = 512
