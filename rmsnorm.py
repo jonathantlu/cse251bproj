@@ -11,6 +11,7 @@ import torch.nn.functional as F
 
 # -----------------------------------------------------------------------------
 # model code
+
 def norm(x):
     return F.rms_norm(x, (x.size(-1),))
 
@@ -65,7 +66,7 @@ class Block(nn.Module):
 
 @dataclass
 class GPTConfig:  # gpt-2 config, about 124m params
-    vocab_size : int = 50257
+    vocab_size : int = 50304
     n_layer : int = 8
     n_head : int = 8
     n_embd : int = 512
@@ -81,6 +82,7 @@ class GPT(nn.Module):
             h = nn.ModuleList([Block(config) for _ in range(config.n_layer)]),
         ))
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
+        self.apply(self._init_weights)
         self.transformer.wte.weight = self.lm_head.weight
 
     def forward(self, idx, targets=None):
@@ -103,6 +105,14 @@ class GPT(nn.Module):
             loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1))
 
         return logits, loss
+
+    def _init_weights(self, module):
+        if isinstance(module, nn.Linear):
+            nn.init.normal_(module.weight, mean=0.0, std=0.02)
+            if module.bias is not None:
+                nn.init.zeros_(module.bias)
+        elif isinstance(module, nn.Embedding):
+            nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
 class Wrapper(nn.Module):
     def __init__(self, checkpoint):
@@ -279,7 +289,7 @@ if __name__ == "__main__":
     assert (args.n_embd // args.n_head) % 2 == 0
 
     model_config = GPTConfig(
-        vocab_size=50257,
+        vocab_size=50304,
         n_layer=args.n_layer,
         n_head=args.n_head,
         n_embd=args.n_embd,
@@ -291,7 +301,22 @@ if __name__ == "__main__":
     ctx = torch.amp.autocast(device_type='cuda', dtype=torch.bfloat16)
 
     # init the optimizer(s)
-    optimizer = torch.optim.AdamW(raw_model.parameters(), lr=args.learning_rate, betas=(0.9, 0.95), weight_decay = args.weight_decay, fused=True)
+    param_dict = {pn: p for pn, p in raw_model.named_parameters()}
+    param_dict = {pn: p for pn, p in param_dict.items() if p.requires_grad}
+    # create optim groups. Any parameters that is 2D will be weight decayed, otherwise no.
+    # i.e. all weight tensors in matmuls + embeddings decay, all biases and layernorms don't.
+    decay_params = [p for n, p in param_dict.items() if p.dim() >= 2]
+    nodecay_params = [p for n, p in param_dict.items() if p.dim() < 2]
+    optim_groups = [
+        {'params': decay_params, 'weight_decay': args.weight_decay},
+        {'params': nodecay_params, 'weight_decay': 0.0}
+    ]
+    num_decay_params = sum(p.numel() for p in decay_params)
+    num_nodecay_params = sum(p.numel() for p in nodecay_params)
+    print(f"num decayed parameter tensors: {len(decay_params)}, with {num_decay_params:,} parameters")
+    print(f"num non-decayed parameter tensors: {len(nodecay_params)}, with {num_nodecay_params:,} parameters")
+    # Create AdamW optimizer and use the fused version if it is available
+    optimizer = torch.optim.AdamW(optim_groups, lr=args.learning_rate, betas=(0.9, 0.95), fused=True)
 
     optimizers = [optimizer]
     # learning rate decay scheduler (linear warmup and warmdown)
