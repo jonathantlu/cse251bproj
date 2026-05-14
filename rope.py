@@ -103,7 +103,7 @@ class GPTConfig:  # gpt-2 config, about 124m params
     vocab_size : int = 50304
     n_layer : int = 12
     n_head : int = 12
-    n_embd : int = 640
+    n_embd : int = 636
 
 class GPT(nn.Module):
     def __init__(self, config):
@@ -319,12 +319,6 @@ if __name__ == "__main__":
     model = model.cuda()
     raw_model = model
     ctx = torch.amp.autocast(device_type='cuda', dtype=torch.bfloat16)
-
-    from torch.backends.cuda import enable_cudnn_sdp, enable_flash_sdp, enable_math_sdp, enable_mem_efficient_sdp
-    enable_cudnn_sdp(True)
-    enable_flash_sdp(False)
-    enable_mem_efficient_sdp(False)
-    enable_math_sdp(False)
 
     # init the optimizer(s)
     optimizer1 = torch.optim.AdamW(raw_model.parameters(), lr=args.learning_rate, betas=(0.9, 0.95), fused=True)
