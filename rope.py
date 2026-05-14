@@ -101,9 +101,9 @@ class Block(nn.Module):
 @dataclass
 class GPTConfig:  # gpt-2 config, about 124m params
     vocab_size : int = 50304
-    n_layer : int = 14
-    n_head : int = 10
-    n_embd : int = 640
+    n_layer : int = 12
+    n_head : int = 12
+    n_embd : int = 768
 
 class GPT(nn.Module):
     def __init__(self, config):
@@ -115,7 +115,7 @@ class GPT(nn.Module):
             h = nn.ModuleList([Block(config) for _ in range(config.n_layer)]),
         ))
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
-        self.lm_head.weight.data.zero_()
+        self.apply(self._init_weights)
         self.transformer.wte.weight = self.lm_head.weight
 
     def forward(self, idx, targets=None):
@@ -134,6 +134,14 @@ class GPT(nn.Module):
             loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1))
 
         return logits, loss
+
+    def _init_weights(self, module):
+        if isinstance(module, nn.Linear):
+            nn.init.normal_(module.weight, mean=0.0, std=0.02)
+            if module.bias is not None:
+                nn.init.zeros_(module.bias)
+        elif isinstance(module, nn.Embedding):
+            nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
 class Wrapper(nn.Module):
     def __init__(self, checkpoint):
@@ -253,7 +261,7 @@ class Hyperparameters:
     input_bin : str = 'data/fineweb10B/fineweb_train_*.bin' # input .bin to train on
 
     # model hyperparams
-    n_layer: int = 12
+    n_layer: int = 10
     n_head: int = 10
     n_embd: int = 640
 
@@ -263,7 +271,7 @@ class Hyperparameters:
     sequence_length : int = 1024 # sequence length, in tokens
 
     num_iterations : int = 4000 # number of iterations to run
-    learning_rate : float = 0.0036
+    learning_rate : float = 0.002
     warmup_iters : int = 250
     warmdown_iters : int = 500 # number of iterations of linear warmup/warmdown for triangular or trapezoidal schedule
     weight_decay : float = 0
@@ -319,6 +327,11 @@ if __name__ == "__main__":
     model = GPT(model_config)
     model = model.cuda()
     raw_model = model
+
+    total_params = sum(p.numel() for p in model.parameters())
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    print(f"Total parameters:     {total_params:>12,}")
+    print(f"Trainable parameters: {trainable_params:>12,}")
     ctx = torch.amp.autocast(device_type='cuda', dtype=torch.bfloat16)
 
     # init the optimizer(s)
