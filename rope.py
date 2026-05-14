@@ -78,7 +78,7 @@ class CausalSelfAttention(nn.Module):
 class MLP(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.c_fc = nn.Linear(config.n_embd, 4 * config.n_embd, bias=False)
+        self.c_fc = nn.Linear(config.n_embd, 8 * config.n_embd, bias=False)
         self.c_proj = nn.Linear(4 * config.n_embd, config.n_embd, bias=False)
 
     def forward(self, x):
@@ -101,9 +101,9 @@ class Block(nn.Module):
 @dataclass
 class GPTConfig:  # gpt-2 config, about 124m params
     vocab_size : int = 50304
-    n_layer : int = 12
-    n_head : int = 12
-    n_embd : int = 636
+    n_layer : int = 14
+    n_head : int = 10
+    n_embd : int = 640
 
 class GPT(nn.Module):
     def __init__(self, config):
@@ -115,6 +115,7 @@ class GPT(nn.Module):
             h = nn.ModuleList([Block(config) for _ in range(config.n_layer)]),
         ))
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
+        self.lm_head.weight.data.zero_()
         self.transformer.wte.weight = self.lm_head.weight
 
     def forward(self, idx, targets=None):
@@ -253,7 +254,7 @@ class Hyperparameters:
 
     # model hyperparams
     n_layer: int = 12
-    n_head: int = 12
+    n_head: int = 10
     n_embd: int = 640
 
     # optimization hyperparams
