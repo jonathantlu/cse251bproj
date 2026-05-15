@@ -85,9 +85,9 @@ class MLP(nn.Module):
 class Block(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.norm1 = nn.RMSNorm(config.n_embd)
+        self.norm1 = nn.RMSNorm(config.n_embd, eps=1e-6)
         self.attn = CausalSelfAttention(config)
-        self.norm2 = nn.RMSNorm(config.n_embd)
+        self.norm2 = nn.RMSNorm(config.n_embd, eps=1e-6)
         self.mlp = MLP(config)
 
     def forward(self, x):
@@ -111,7 +111,7 @@ class GPT(nn.Module):
         self.transformer = nn.ModuleDict(dict(
             wte = nn.Embedding(config.vocab_size, config.n_embd),
             h = nn.ModuleList([Block(config) for _ in range(config.n_layer)]),
-            norm = nn.RMSNorm(config.n_embd)
+            norm = nn.RMSNorm(config.n_embd, eps=1e-6)
         ))
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
         self.apply(self._init_weights)
