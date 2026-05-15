@@ -41,13 +41,6 @@ def apply_rotary_emb(x, cos, sin):
     y2 = x1 * (-sin) + x2 * cos
     return torch.cat([y1, y2], 3).type_as(x)
 
-def norm(x):
-    return F.rms_norm(x, (x.size(-1),))
-
-def swiglu(x):
-    x, gate = x.chunk(2, dim = -1)
-    return F.silu(x) * gate
-
 class CausalSelfAttention(nn.Module):
     def __init__(self, config):
         super().__init__()
@@ -77,18 +70,14 @@ class CausalSelfAttention(nn.Module):
         y = self.c_proj(y)
         return y
 
-def find_multiple(n, multiple):
-    return multiple * ((n + multiple - 1) // multiple)
-
 class MLP(nn.Module):
     def __init__(self, config):
         super().__init__()
-        hidden_dim = int(4 * config.n_embd * 2 / 3)
-        hidden_dim = find_multiple(hidden_dim, 256)
+        hidden_dim = config.ffn_dim
 
-        self.w1 = nn.Linear(config.n_embd, hidden_dim, bias=False)
-        self.w3 = nn.Linear(config.n_embd, hidden_dim, bias=False)
-        self.w2 = nn.Linear(hidden_dim, config.n_embd, bias=False)
+        self.w1 = nn.Linear(config.n_embd, config.ffn_dim, bias=False)
+        self.w3 = nn.Linear(config.n_embd, config.ffn_dim, bias=False)
+        self.w2 = nn.Linear(config.ffn_dim, config.n_embd, bias=False)
 
     def forward(self, x):
         return self.w2(F.silu(self.w1(x)) * self.w3(x))
@@ -96,12 +85,14 @@ class MLP(nn.Module):
 class Block(nn.Module):
     def __init__(self, config):
         super().__init__()
+        self.norm1 = nn.RMSNorm(config.n_embd)
         self.attn = CausalSelfAttention(config)
+        self.norm2 = nn.RMSNorm(config.n_embd)
         self.mlp = MLP(config)
 
     def forward(self, x):
-        x = x + self.attn(norm(x))
-        x = x + self.mlp(norm(x))
+        x = x + self.attn(self.norm1(x))
+        x = x + self.mlp(self.norm2(x))
         return x
 
 @dataclass
@@ -110,6 +101,7 @@ class GPTConfig:  # gpt-2 config, about 124m params
     n_layer : int = 12
     n_head : int = 12
     n_embd : int = 768
+    ffn_dim: int = 2048
 
 class GPT(nn.Module):
     def __init__(self, config):
@@ -119,6 +111,7 @@ class GPT(nn.Module):
         self.transformer = nn.ModuleDict(dict(
             wte = nn.Embedding(config.vocab_size, config.n_embd),
             h = nn.ModuleList([Block(config) for _ in range(config.n_layer)]),
+            norm = nn.RMSNorm(config.n_embd)
         ))
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
         self.apply(self._init_weights)
@@ -130,7 +123,7 @@ class GPT(nn.Module):
 
         for block in self.transformer.h:
             x = block(x)
-        x = norm(x)
+        x = self.transformer.norm(x)
 
         logits = self.lm_head(x)
         logits = logits.float()
@@ -267,9 +260,10 @@ class Hyperparameters:
     input_bin : str = 'data/fineweb10B/fineweb_train_*.bin' # input .bin to train on
 
     # model hyperparams
-    n_layer: int = 8
-    n_head: int = 8
-    n_embd: int = 512
+    n_layer: int = 16
+    n_head: int = 9
+    n_embd: int = 576
+    ffn_dim: int = 1792
 
     # optimization hyperparams
     batch_size : int = 8*64 # batch size, in sequences, across all devices
@@ -324,10 +318,11 @@ if __name__ == "__main__":
     assert (args.n_embd // args.n_head) % 2 == 0
 
     model_config = GPTConfig(
-        vocab_size=50304,
+        vocab_size=50257,
         n_layer=args.n_layer,
         n_head=args.n_head,
         n_embd=args.n_embd,
+        ffn_dim=args.ffn_dim,
     )
 
     model = GPT(model_config)
