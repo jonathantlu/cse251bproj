@@ -318,7 +318,7 @@ if __name__ == "__main__":
     assert (args.n_embd // args.n_head) % 2 == 0
 
     model_config = GPTConfig(
-        vocab_size=50304,
+        vocab_size=50257,
         n_layer=args.n_layer,
         n_head=args.n_head,
         n_embd=args.n_embd,
