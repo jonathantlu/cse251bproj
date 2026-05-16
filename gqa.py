@@ -86,8 +86,8 @@ class CausalSelfAttention(nn.Module):
         # calculate query, key, values for all heads in batch and move head forward to be the batch dim
         qkv = self.c_attn(x)
         q, k, v = qkv.split([self.n_embd, self.kv_dim, self.kv_dim], dim=2)
-        q = k.view(B, T, self.n_head, self.head_dim)
-        k = q.view(B, T, self.n_kv_head, self.head_dim)
+        q = q.view(B, T, self.n_head, self.head_dim)
+        k = k.view(B, T, self.n_kv_head, self.head_dim)
         v = v.view(B, T, self.n_kv_head, self.head_dim)
         cos, sin = self.rotary(q)
         q, k = apply_rotary_emb(q, cos, sin), apply_rotary_emb(k, cos, sin)
