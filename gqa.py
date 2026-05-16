@@ -76,7 +76,7 @@ class CausalSelfAttention(nn.Module):
 
         self.kv_dim = self.n_kv_head * self.head_dim
         # key, query, value projections for all heads, but in a batch
-        self.c_attn = nn.Linear(self.n_embd, self.n_embd + 2 * self.n_kv_dim, bias=False)
+        self.c_attn = nn.Linear(self.n_embd, self.n_embd + 2 * self.kv_dim, bias=False)
         # output projection
         self.c_proj = nn.Linear(self.n_embd, self.n_embd, bias=False)
         self.rotary = Rotary(self.head_dim)
