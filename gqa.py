@@ -107,7 +107,7 @@ class MLP(nn.Module):
 
     def forward(self, x):
         x, gate = self.w1(x).chunk(2, dim = -1)
-        return self.w2(F.silu(self.w1(x)) * self.w3(x))
+        return self.w2(F.silu(x) * gate)
 
 class Block(nn.Module):
     def __init__(self, config):
