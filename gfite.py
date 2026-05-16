@@ -146,17 +146,15 @@ class GPT(nn.Module):
             x = block(x)
         x = self.transformer.norm(x)
 
-        h = x.reshape(-1, x.size(-1))
-        y = targets.reshape(-1)
+        logits = self.transformer.wte.logits(x)
+        logits = logits.float()
+        loss = None
 
-        total_loss = torch.zeros((), device=h.device, dtype=torch.float32)
+        if targets is not None:
+            loss = F.cross_entropy(logits.reshape(-1, logits.size(-1)), targets.reshape(-1))
+            logits = None
 
-        for h_chunk, y_chunk in zip(h.split(loss_chunk_size, dim=0), y.split(loss_chunk_size, dim=0)):
-            logits_chunk = self.transformer.wte.logits(h_chunk).float()
-            total_loss = total_loss + F.cross_entropy(logits_chunk, y_chunk, reduction="sum")
-
-        loss = total_loss / y.numel()
-        return None, loss
+        return logits, loss
 
     def _init_weights(self, module):
         if isinstance(module, nn.Linear):
