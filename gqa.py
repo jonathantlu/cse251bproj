@@ -76,7 +76,7 @@ class CausalSelfAttention(nn.Module):
 
         self.kv_dim = self.n_kv_head * self.head_dim
         # key, query, value projections for all heads, but in a batch
-        self.c_attn = nn.Linear(self.n_embd, self.n_embd + 2 * self.n_kv_head, bias=False)
+        self.c_attn = nn.Linear(self.n_embd, self.n_embd + 2 * self.n_kv_dim, bias=False)
         # output projection
         self.c_proj = nn.Linear(self.n_embd, self.n_embd, bias=False)
         self.rotary = Rotary(self.head_dim)
@@ -86,8 +86,8 @@ class CausalSelfAttention(nn.Module):
         # calculate query, key, values for all heads in batch and move head forward to be the batch dim
         qkv = self.c_attn(x)
         q, k, v = qkv.split([self.n_embd, self.kv_dim, self.kv_dim], dim=2)
-        k = k.view(B, T, self.n_head, self.head_dim)
-        q = q.view(B, T, self.n_kv_head, self.head_dim)
+        q = k.view(B, T, self.n_head, self.head_dim)
+        k = q.view(B, T, self.n_kv_head, self.head_dim)
         v = v.view(B, T, self.n_kv_head, self.head_dim)
         cos, sin = self.rotary(q)
         q, k = apply_rotary_emb(q, cos, sin), apply_rotary_emb(k, cos, sin)
@@ -102,11 +102,11 @@ class MLP(nn.Module):
         super().__init__()
         hidden_dim = config.ffn_dim
 
-        self.w1 = nn.Linear(config.n_embd, config.ffn_dim, bias=False)
-        self.w3 = nn.Linear(config.n_embd, config.ffn_dim, bias=False)
+        self.w1 = nn.Linear(config.n_embd, 2 * config.ffn_dim, bias=False)
         self.w2 = nn.Linear(config.ffn_dim, config.n_embd, bias=False)
 
     def forward(self, x):
+        x, gate = self.w1(x).chunk(2, dim = -1)
         return self.w2(F.silu(self.w1(x)) * self.w3(x))
 
 class Block(nn.Module):
