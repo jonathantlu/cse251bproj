@@ -8,7 +8,6 @@ import numpy as np
 import torch
 from torch import nn
 import torch.nn.functional as F
-from torch.nn.attention import sdpa_kernel, SDPBackend
 
 # -----------------------------------------------------------------------------
 # model code
@@ -93,20 +92,12 @@ class CausalSelfAttention(nn.Module):
         cos, sin = self.rotary(q)
         q, k = apply_rotary_emb(q, cos, sin), apply_rotary_emb(k, cos, sin)
 
-        with sdpa_kernel(backends=[SDPBackend.FLASH_ATTENTION]):
-            y = F.scaled_dot_product_attention(
-                q.transpose(1, 2),
-                k.transpose(1, 2),
-                v.transpose(1, 2),
-                is_causal=True,
-                enable_gqa=True,
-            )
-        #if self.n_kv_head != self.n_head:
-        #    repeat = self.n_head // self.n_kv_head
-        #    k = k.repeat_interleave(repeat, dim=2)
-        #    v = v.repeat_interleave(repeat, dim=2)
+        if self.n_kv_head != self.n_head:
+            repeat = self.n_head // self.n_kv_head
+            k = k.repeat_interleave(repeat, dim=2)
+            v = v.repeat_interleave(repeat, dim=2)
 
-        #y = F.scaled_dot_product_attention(q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2), is_causal=True)
+        y = F.scaled_dot_product_attention(q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2), is_causal=True)
         y = y.transpose(1, 2).contiguous().view(B, T, C) # re-assemble all head outputs side by side
         # output projection
         y = self.c_proj(y)
