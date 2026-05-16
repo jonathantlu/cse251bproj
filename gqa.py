@@ -159,13 +159,12 @@ class GPT(nn.Module):
         x = self.transformer.norm(x)
 
         logits = self.transformer.wte.logits(x)
-        logits = logits.float()
-        loss = None
 
         if targets is not None:
             loss = F.cross_entropy(logits.reshape(-1, logits.size(-1)), targets.reshape(-1))
+            return None, loss
 
-        return logits, loss
+        return logits.float(), None
 
     def _init_weights(self, module):
         if isinstance(module, nn.Linear):
@@ -432,19 +431,19 @@ if __name__ == "__main__":
 
         # --------------- TRAINING SECTION BEGIN -----------------
         model.train()
-        for i in range(1, train_accumulation_steps + 1):
+        loss_accum = 0.0
+        for i in range(train_accumulation_steps):
             # forward pass
             with ctx:
                 _, loss = model(x, y)
-                train_loss = loss.detach()
+                loss_accum += loss.detach()
                 # advance the dataset for the next batch
-            x, y = train_loader.next_batch()
             # backward pass
-            loss.backward()
+            (loss / train_accumulation_steps).backward()
+            x, y = train_loader.next_batch()
 
-        for p in model.parameters():
-            if p.grad is not None:
-                p.grad.div_(train_accumulation_steps)
+        train_loss = loss_accum / train_accumulation_steps
+
         # step the optimizers and schedulers
         for opt, sched in zip(optimizers, schedulers):
             opt.step()
