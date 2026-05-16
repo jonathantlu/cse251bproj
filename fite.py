@@ -25,6 +25,15 @@ class FactorizedTiedEmbedding(nn.Module):
         z = F.linear(hidden, self.proj.weight.T)
         return F.linear(z, self.embed.weight)
 
+class CastedRMSNorm(nn.Module):
+    def __init__(self, dim: int, eps: float = 1e-6):
+        super().__init__()
+        self.weight = nn.Parameter(torch.ones(dim))
+        self.eps = eps
+
+    def forward(self, x):
+        return F.rms_norm(x, (x.size(-1),), self.weight.to(dtype=x.dtype), self.eps)
+
 class Rotary(torch.nn.Module):
     def __init__(self, dim, base=10000):
         super().__init__()
@@ -98,9 +107,9 @@ class MLP(nn.Module):
 class Block(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.norm1 = nn.RMSNorm(config.n_embd, eps=1e-6)
+        self.norm1 = CastedRMSNorm(config.n_embd, eps=1e-6)
         self.attn = CausalSelfAttention(config)
-        self.norm2 = nn.RMSNorm(config.n_embd, eps=1e-6)
+        self.norm2 = CastedRMSNorm(config.n_embd, eps=1e-6)
         self.mlp = MLP(config)
 
     def forward(self, x):
@@ -125,7 +134,7 @@ class GPT(nn.Module):
         self.transformer = nn.ModuleDict(dict(
             wte = FactorizedTiedEmbedding(config.vocab_size, config.embed_rank, config.n_embd),
             h = nn.ModuleList([Block(config) for _ in range(config.n_layer)]),
-            norm = nn.RMSNorm(config.n_embd, eps=1e-6)
+            norm = CastedRMSNorm(config.n_embd, eps=1e-6)
         ))
         self.apply(self._init_weights)
 
