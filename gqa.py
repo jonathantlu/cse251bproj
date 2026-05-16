@@ -8,6 +8,7 @@ import numpy as np
 import torch
 from torch import nn
 import torch.nn.functional as F
+from torch.nn.attention import sdpa_kernel, SDPBackend
 
 # -----------------------------------------------------------------------------
 # model code
