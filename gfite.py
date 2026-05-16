@@ -425,9 +425,9 @@ if __name__ == "__main__":
                 _, loss = model(x, y)
                 loss_accum += loss.detach()
                 # advance the dataset for the next batch
-            x, y = train_loader.next_batch()
             # backward pass
             (loss / train_accumulation_steps).backward()
+            x, y = train_loader.next_batch()
 
         train_loss = loss_accum / train_accumulation_steps
 
