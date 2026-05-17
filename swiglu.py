@@ -53,6 +53,8 @@ class CausalSelfAttention(nn.Module):
         # output projection
         self.c_proj = nn.Linear(self.n_embd, self.n_embd, bias=False)
         self.rotary = Rotary(self.head_dim)
+        self.q_norm = CastedRMSNorm(self.head_dim, eps=1e-6)
+        self.k_norm = CastedRMSNorm(self.head_dim, eps=1e-6)
 
     def forward(self, x):
         B, T, C = x.size() # batch size, sequence length, embedding dimensionality (n_embd)
@@ -62,6 +64,8 @@ class CausalSelfAttention(nn.Module):
         k = k.view(B, T, self.n_head, self.head_dim)
         q = q.view(B, T, self.n_head, self.head_dim)
         v = v.view(B, T, self.n_head, self.head_dim)
+        q = self.q_norm(q)
+        k = self.k_norm(k)
         cos, sin = self.rotary(q)
         q, k = apply_rotary_emb(q, cos, sin), apply_rotary_emb(k, cos, sin)
         y = F.scaled_dot_product_attention(q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2), is_causal=True)

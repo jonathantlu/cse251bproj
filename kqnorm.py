@@ -81,7 +81,6 @@ class CausalSelfAttention(nn.Module):
         self.c_proj = nn.Linear(self.n_embd, self.n_embd, bias=False)
         self.rotary = Rotary(self.head_dim)
 
-
         self.q_norm = CastedRMSNorm(self.head_dim, eps=1e-6)
         self.k_norm = CastedRMSNorm(self.head_dim, eps=1e-6)
 
