@@ -260,10 +260,10 @@ class Hyperparameters:
     input_bin : str = 'data/fineweb10B/fineweb_train_*.bin' # input .bin to train on
 
     # model hyperparams
-    n_layer: int = 16
-    n_head: int = 9
-    n_embd: int = 576
-    ffn_dim: int = 1792
+    n_layer: int = 12
+    n_head: int = 10
+    n_embd: int = 640
+    ffn_dim: int = 2048
 
     # optimization hyperparams
     batch_size : int = 8*64 # batch size, in sequences, across all devices
@@ -336,7 +336,7 @@ if __name__ == "__main__":
     ctx = torch.amp.autocast(device_type='cuda', dtype=torch.bfloat16)
 
     # init the optimizer(s)
-    optimizer1 = torch.optim.AdamW(raw_model.parameters(), lr=args.learning_rate, betas=(0.9, 0.95), fused=True)
+    optimizer1 = torch.optim.AdamW(raw_model.parameters(), lr=args.learning_rate, betas=(0.9, 0.95), weight_decay=args.weight_decay, fused=True)
 
     optimizers = [optimizer1]
     # learning rate decay scheduler (linear warmup and warmdown)
@@ -393,19 +393,19 @@ if __name__ == "__main__":
 
         # --------------- TRAINING SECTION BEGIN -----------------
         model.train()
-        for i in range(1, train_accumulation_steps + 1):
+        loss_accum = 0.0
+        for i in range(train_accumulation_steps):
             # forward pass
             with ctx:
                 _, loss = model(x, y)
-                train_loss = loss.detach()
+                loss_accum += loss.detach()
                 # advance the dataset for the next batch
-            x, y = train_loader.next_batch()
             # backward pass
-            loss.backward()
+            (loss / train_accumulation_steps).backward()
+            x, y = train_loader.next_batch()
 
-        for p in model.parameters():
-            if p.grad is not None:
-                p.grad.div_(train_accumulation_steps)
+        train_loss = loss_accum / train_accumulation_steps
+
         # step the optimizers and schedulers
         for opt, sched in zip(optimizers, schedulers):
             opt.step()
