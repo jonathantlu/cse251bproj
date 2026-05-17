@@ -139,13 +139,12 @@ class GPT(nn.Module):
         x = self.transformer.norm(x)
 
         logits = self.lm_head(x)
-        logits = logits.float()
-        loss = None
 
         if targets is not None:
-            loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1))
+            loss = F.cross_entropy(logits.reshape(-1, logits.size(-1)), targets.reshape(-1))
+            return None, loss
 
-        return logits, loss
+        return logits.float(), None
 
     def _init_weights(self, module):
         if isinstance(module, nn.Linear):
@@ -287,7 +286,7 @@ class Hyperparameters:
     learning_rate : float = 0.002
     warmup_iters : int = 250
     warmdown_iters : int = 500 # number of iterations of linear warmup/warmdown for triangular or trapezoidal schedule
-    weight_decay : float = 0
+    weight_decay : float = 0.1
 
     checkpoint_path: str = "checkpoint.pt"
 
