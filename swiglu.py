@@ -12,6 +12,15 @@ import torch.nn.functional as F
 # -----------------------------------------------------------------------------
 # model code
 
+class CastedRMSNorm(nn.Module):
+    def __init__(self, dim: int, eps: float = 1e-6):
+        super().__init__()
+        self.weight = nn.Parameter(torch.ones(dim))
+        self.eps = eps
+
+    def forward(self, x):
+        return F.rms_norm(x, (x.size(-1),), self.weight.to(dtype=x.dtype), self.eps)
+
 class Rotary(torch.nn.Module):
     def __init__(self, dim, base=10000):
         super().__init__()
@@ -79,19 +88,19 @@ class MLP(nn.Module):
         super().__init__()
         hidden_dim = config.ffn_dim
 
-        self.w1 = nn.Linear(config.n_embd, config.ffn_dim, bias=False)
-        self.w3 = nn.Linear(config.n_embd, config.ffn_dim, bias=False)
+        self.w1 = nn.Linear(config.n_embd, 2 * config.ffn_dim, bias=False)
         self.w2 = nn.Linear(config.ffn_dim, config.n_embd, bias=False)
 
     def forward(self, x):
-        return self.w2(F.silu(self.w1(x)) * self.w3(x))
+        x, gate = self.w1(x).chunk(2, dim = -1)
+        return self.w2(F.silu(x) * gate)
 
 class Block(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.norm1 = nn.RMSNorm(config.n_embd, eps=1e-6)
+        self.norm1 = CastedRMSNorm(config.n_embd, eps=1e-6)
         self.attn = CausalSelfAttention(config)
-        self.norm2 = nn.RMSNorm(config.n_embd, eps=1e-6)
+        self.norm2 = CastedRMSNorm(config.n_embd, eps=1e-6)
         self.mlp = MLP(config)
 
     def forward(self, x):
@@ -115,7 +124,7 @@ class GPT(nn.Module):
         self.transformer = nn.ModuleDict(dict(
             wte = nn.Embedding(config.vocab_size, config.n_embd),
             h = nn.ModuleList([Block(config) for _ in range(config.n_layer)]),
-            norm = nn.RMSNorm(config.n_embd, eps=1e-6)
+            norm = CastedRMSNorm(config.n_embd, eps=1e-6)
         ))
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
         self.apply(self._init_weights)
