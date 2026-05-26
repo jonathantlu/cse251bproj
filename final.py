@@ -500,25 +500,25 @@ if __name__ == "__main__":
     # start the clock
     torch.cuda.synchronize()
     t0 = time.time()
+    timing_start_step = max(start_step, 10)
     # begin training
-    if resume_checkpoint is None:
-        train_loader.reset()
     for step in range(start_step, args.num_iterations + 1):
         last_step = (step == args.num_iterations)
         # This effectively ignores timing first 10 steps, which are slower for weird reasons.
         # Alternately, and slightly more correctly in terms of benchmarking, we could do 10
         # steps with dummy data first, and then re-initialize the model and reset the loader.
-        if step == 10:
+        if start_step <= 10 and step == 10:
             training_time_ms = 0
             t0 = time.time()
-        timed_steps = float('nan') if step <= 11 else (step - 10) + 1 # <= 11 to avoid bug in val
+        timed_steps = float('nan') if step < timing_start_step + 2 else (step - timing_start_step) + 1 # first timed steps are noisy
 
         # bit confusing: we want to make sure to eval on 0th iteration
         # but also after the very last iteration. so we loop for step <= num_iterations
         # instead of just < num_iterations (one extra due to <=), only to do
         # the validation/sampling one last time, and then we break right here as we're done.
         if last_step:
-            save_checkpoint(step)
+            if not (args.checkpoint_interval > 0 and step % args.checkpoint_interval == 0):
+                save_checkpoint(step)
             break
 
         # --------------- TRAINING SECTION BEGIN -----------------

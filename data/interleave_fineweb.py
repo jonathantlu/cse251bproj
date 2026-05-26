@@ -7,11 +7,11 @@ from pathlib import Path
 parser = argparse.ArgumentParser(description="Create interleaved FineWeb/FineWeb-Edu shard symlinks")
 parser.add_argument("--fineweb", default="data/fineweb10B/fineweb_train_*.bin")
 parser.add_argument("--fineweb_edu", default="data/fineweb_edu100B/fineweb_edu_train_*.bin")
-parser.add_argument("--out", default="data/fineweb_mix10B")
+parser.add_argument("--out", default="data/fineweb_mix110B")
 parser.add_argument("--edu_per_fineweb", type=int, default=10)
 parser.add_argument("--fineweb_offset", type=int, default=-1, help="-1 places FineWeb in the middle of each Edu block")
 parser.add_argument("--tokens_per_shard", type=int, default=10**8)
-parser.add_argument("--target_tokens", type=int, default=10**10, help="0 links all shards")
+parser.add_argument("--target_tokens", type=int, default=0, help="0 links all shards")
 parser.add_argument("--force", action="store_true")
 args = parser.parse_args()
 fineweb_offset = args.edu_per_fineweb // 2 if args.fineweb_offset < 0 else args.fineweb_offset
