@@ -360,7 +360,7 @@ class DistributedDataLoader:
 @dataclass
 class Hyperparameters:
     # data hyperparams
-    input_bin : str = 'data/fineweb10B/fineweb_train_*.bin' # input .bin to train on
+    input_bin : str = 'data/fineweb_mix110B/mix_train_*.bin' # input .bin to train on
 
     # model hyperparams
     n_layer: int = 12
