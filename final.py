@@ -384,6 +384,7 @@ class Hyperparameters:
     checkpoint_path: str = "checkpoint.pt"
     checkpoint_interval : int = 10000 # 0 disables periodic checkpointing
     resume_checkpoint_path: str = ""
+    init_from_checkpoint: str = ""
 
 def parse_args() -> Hyperparameters:
     parser = argparse.ArgumentParser()
@@ -416,7 +417,9 @@ if __name__ == "__main__":
     # load tokens
     train_loader = DistributedDataLoader(args.input_bin, B, T, process_rank, num_processes)
     print(f"Training DataLoader: total number of tokens: {train_loader.ntok_total} across {len(train_loader.files)} files")
+    assert not (args.resume_checkpoint_path and args.init_from_checkpoint), "use resume_checkpoint_path or init_from_checkpoint, not both"
     resume_checkpoint = torch.load(args.resume_checkpoint_path, map_location="cpu", weights_only=False) if args.resume_checkpoint_path else None
+    init_checkpoint = torch.load(args.init_from_checkpoint, map_location="cpu", weights_only=False) if args.init_from_checkpoint else None
     if resume_checkpoint and "loader_state_dict" in resume_checkpoint:
         train_loader.load_state_dict(resume_checkpoint["loader_state_dict"])
         x, y = resume_checkpoint["x"].cuda(), resume_checkpoint["y"].cuda()
@@ -429,14 +432,17 @@ if __name__ == "__main__":
     assert args.n_embd % args.n_head == 0
     assert (args.n_embd // args.n_head) % 2 == 0
 
-    model_config = GPTConfig(**resume_checkpoint["config"]) if resume_checkpoint else GPTConfig(
+    source_checkpoint = resume_checkpoint or init_checkpoint
+    model_config = GPTConfig(**source_checkpoint["config"]) if source_checkpoint else GPTConfig(
         vocab_size=50257, n_layer=args.n_layer, n_head=args.n_head, n_embd=args.n_embd, ffn_dim=args.ffn_dim)
 
     model = GPT(model_config)
     model = model.cuda()
     raw_model = model
-    if resume_checkpoint:
-        raw_model.load_state_dict(resume_checkpoint["model_state_dict"])
+    if source_checkpoint:
+        raw_model.load_state_dict(source_checkpoint["model_state_dict"])
+        if init_checkpoint:
+            print(f"initialized model from {args.init_from_checkpoint}")
 
     total_params = sum(p.numel() for p in model.parameters())
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
